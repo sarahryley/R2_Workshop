@@ -1,0 +1,358 @@
+---
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: simplex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+# R2 Workshop
+
+This lesson will primarily use R's tidyverse packages to sort, filter, group, summarize, join, and visualize data.
+
+**Data:**
+
+- [NYC Dept of Buildings – Approved Permits](https://data.cityofnewyork.us/Housing-Development/DOB-NOW-Build-Approved-Permits/rbx6-tga4/about_data) from NYC open data. Note that this data only includes permits filed through the **DOB NOW** system, and may not include all permits, such as those filed the old-school way. 
+
+**Cheat sheets:**
+
+- [R markdown](https://rmarkdown.rstudio.com/lesson-15.HTML): The type of file we're using. Easily converts into other file types such as html and PDF.
+- [tidyverse](https://www.tidyverse.org/packages/): A group of core packages for data wrangling, analysis, and graphics.
+  - [ggplot2](https://ggplot2.tidyverse.org/): for making charts and graphs. [“Be awesome in ggplot2”](https://www.sthda.com/english/wiki/be-awesome-in-ggplot2-a-practical-guide-to-be-highly-effective-r-software-and-data-visualization) is a great beginner tutorial with sample code.
+  - [stringr](https://rstudio.github.io/cheatsheets/html/strings.html): for manipulating text (aka “strings”); essential for cleaning data.
+  - [tidyr](https://rstudio.github.io/cheatsheets/html/tidyr.html?): for creating and shaping “tidy” data
+  - [dplyr](https://rstudio.github.io/cheatsheets/html/data-transformation.html?): core data analysis functions
+  - [readr](https://rstudio.github.io/cheatsheets/html/data-import.html?): for reading and writing data in R Studio
+  - [lubridate](https://rstudio.github.io/cheatsheets/html/lubridate.html): for working with dates
+- [janitor](https://sfirke.github.io/janitor/reference/index.html): Handy data cleaning, summarizing, and wrangling functions
+- [scales](https://scales.r-lib.org/): for pretty scales on charts and maps
+- [DataExplorer](https://cran.r-project.org/web/packages/DataExplorer/vignettes/dataexplorer-intro.html): for quickly exploring data
+  
+**Note:**
+
+- **`%>%`** is called a "pipe." It's how tidyverse tells R: "And then do this." Tidyverse's new pipe is **`|>`**; it means the same thing as **`%>%`** and can be used interchangeably.
+
+<br>
+
+# Setup
+
+<br>
+
+- `rm(list=ls())` clears all objects from the global environment
+- `gc()` frees up memory by cleaning up unused objects; important if you're working on more memory-intensive analysis
+- `options(scipen = 999)` disables scientific notation, important you're loading an Excel spreadsheet with long numerical strings.
+- `library()` loads the packages you'll be using in R. You need to load the libraries you'll be use every time you open R.
+
+```{r load libraries}
+
+rm(list=ls())
+gc()
+options(scipen = 999)
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(scales)
+library(zoo)
+library(DataExplorer)
+
+```
+
+<br>
+
+## Load make_report function
+
+A custom function I'm calling "make_report" that creates a dataset report. (Requires DataExplorer)
+
+- `function()` tells R you're creating a function
+- `table` tells R that the function will be performed on the entire table
+- `{}` encloses the entire function
+
+```{r make_report function}
+
+make_report <- function(table) {
+  
+  table <- table %>% 
+    mutate(`# Records` = row_number())
+  
+  missing <- profile_missing(table)
+  
+  summaries <- table %>%   
+    #remove_empty("cols") %>%
+    summarize_all(funs(distinct = n_distinct,
+                       count = n())) %>% 
+    gather() %>%
+    separate(key, c("feature", "stat"), sep = "_(?=[^_]+$)") %>%
+    spread(stat, value) %>%
+    right_join(missing, by = "feature")
+  
+  summaries %>%
+    mutate_at(vars(count, distinct), as.integer) %>%
+    mutate(pct_missing = round(pct_missing,2),
+           pct_distinct = round((distinct/count), 2),
+           num_values = count-num_missing) %>%
+    arrange(pct_missing, desc(distinct)) %>%
+    select(Column = feature,
+           `# Distinct` = distinct,
+           `# Not Missing` = num_values,
+           `# Missing` = num_missing,
+           `% Missing` = pct_missing,
+           `% Distinct` = pct_distinct) 
+}
+
+```
+
+## Load data
+
+- `read_csv` loads the data into R studio. The path is specified inside quotes "" as Folder(s)->File Name. 
+  - `guess_max = ` If you don’t specify the column types, readr will attempt to guess by inspecting 1000 values, evenly spaced from the first to the last row. If those values happen to be empty, readr default converts the entire column to TRUE/FALSE (logical), and anything that isn't TRUE/FALSE becomes Null. This is usually NOT what you want. `guess_max` simply expands that number to whatever you specify, ensuring that R is looking at all the values before picking a column type.
+  - `<-` puts the data in the Global Environment, in a dataframe named "dob_org" (for "original data")
+
+- `clean_names()` is a function from janitor that converts all column names to lower case and replace spaces with "_" for easier coding. (Column names with spaces need to be enclosed in `` marks.)
+
+
+```{r load data}
+
+dob_org <- read_csv("Input/DOB_NOW_approved_permits_20250219.csv", guess_max = 1000000) %>%
+  clean_names()
+
+cd <- read_csv("Input/cd_info.csv") 
+
+```
+
+## Glimpse, Summary & Profile Missing
+
+- `glimpse()` let's you see all the column names and types at once.
+
+- `summary()` is useful to see highest/lowest values, means, etc.
+
+- `profile_missing()` from Data Explorer shows how many missing values are in each column
+
+```{r view}
+
+glimpse(dob_org)
+
+summary(dob_org)
+
+profile_missing(dob_org)
+
+```
+
+## Make report
+
+- `make_report()` is the custom function we just loaded, which summarises distinct and missing records in the datatable.
+- `arrange()` sorts the data by a column and `-` sorts it in descending order versus ascending order.
+  - The column name is enclosed with ```` marks because it has a space and starts with a non-alphabetical character
+
+```{r make report}
+
+make_report(dob_org)  %>%
+  arrange(-`# Distinct`)
+
+```
+
+# Prep Data
+
+Now we'll do some very light data prep so we can analyze the data.
+
+**It's important to do this correctly for this lesson!**
+
+- `rename` renames the "community district" column "cd," which is easier to type over and over
+- `mutate()` changes the information in a column, or creates a new column
+- `mutate_at()` mutates multiple columns at the same time based on a condition, in this case the column name contains the word "date."
+
+**Mutate functions:**
+
+- `as.character()- ` converts the community district into text, since numeric identifiers like zip codes, phone numbers, and IDs aren't numbers in dataland as you can't do math on them.
+- `mdy_hms()` converts the date the permit was issued into a date, since it loaded as a string. Note, you must use the correct date format or the dates will turn into Nulls. For example, if the dates had been stored in European format, you'd use `dmy` instead of `mdy`.
+- `year()` is a lubridate function that extracts the year from the date.
+- `as.yearmon()` is a zoo function that extracts the year_month from the date, while keeping it sortable in chronological order
+  
+```{r light cleaing}
+
+dob <- dob_org %>%
+  rename(cd = c_b_no) %>%
+  mutate(cd = as.character(cd))
+
+dob <- dob %>%
+  mutate_at(vars(contains("_date")), ~mdy_hms(.))
+
+dob <- dob %>%
+  mutate(issued_year = year(issued_date),
+         issued_yearmon = as.yearmon(issued_date))
+
+dob <- dob %>%
+  mutate_if(is.character, ~str_to_upper(.))
+
+```
+
+# Counting
+
+```{r count year}
+
+dob %>%
+  count(issued_year)
+
+dob %>%
+  count(filing_reason)
+
+dob %>%
+  count(work_type)
+
+```
+
+## Count Distinct, Group, Summarise
+
+- `n_distinct()` counts the number of distinct values in a column, rather than just the number of values. This is an **extremely important** concept in data. As you can see, the same job can have multiple filings in the data. 
+Count the number of rows and the number of unique job filings by borough
+
+```{r count distint}
+
+dob %>%
+  count(n_distinct(job_filing_number))
+
+dob %>%
+  group_by(borough) %>%
+  summarise(n = n(),
+            job_filings = n_distinct(job_filing_number))
+
+```
+
+## Group, Summarise, and Spread
+
+```{r group spread}
+
+dob %>%
+  group_by(work_type, borough) %>%
+  summarise(job_filings = n_distinct(job_filing_number)) %>%
+  spread(borough, job_filings) %>%
+  arrange(-BRONX)
+
+```
+
+# Filtering
+
+- Filtering operators can be found in the  [dplyr documentation](https://dplyr.tidyverse.org/reference/filter.html).
+- String operators can be found in the [stringr documentation](https://stringr.tidyverse.org/).
+- R is case sensitive, so we'll convert `job_description` to all upper case using `str_to_upper`, otherwise we'd have to anticipate all upper/lower case combinations.
+- In R, `!`  means "not"
+
+```{r solar}
+
+shed <- dob %>%
+  filter(work_type == "SIDEWALK SHED" &
+           year(issued_date) >= 2018)
+
+shed %>% count(issued_year)
+
+shed %>%
+  group_by(year = year(issued_date)) %>%
+  summarise(n = n_distinct(job_description))
+
+shed %>%
+  count(job_description)
+
+shed %>%
+  mutate(job_description = str_to_upper(job_description)) %>%
+  filter(str_detect(job_description, "EMERGENCY")) %>%
+  count(job_description)
+
+shed %>%
+  mutate(job_description = str_to_upper(job_description)) %>%
+  filter(!str_detect(job_description, "EMERGENCY"))  %>%
+  count(job_description)
+
+```
+
+# Summarising with dates
+
+- `Sys.Date()` returns today's date. This is a great function because then every time you rerun your code it will be current.
+- The dates still need to be in a consistent format, so I'm adding `as.POSIXct` as a wrap around the date functions.
+
+```{r shed sum}
+
+table <- shed %>%
+  mutate(id = row_number()) %>%
+  group_by(borough, cd, bin, job_filing_number) %>%
+  summarise(min_date = min(issued_date),
+            max_date = max(expired_date)) %>%
+  mutate(today = as.POSIXct(Sys.Date()),
+         max_date = as.POSIXct(ifelse(max_date > today, today, max_date)),
+         years = difftime(max_date, min_date, units = "days"),
+         years = as.numeric(years)/365) %>%
+  filter(years > 0)
+
+```
+
+# Join data
+
+- The is a very simple **left_join**. Other common types of joins include **right_join**, **inner_join**, **outer_join**, **semi_join**, and **anti_join**.
+- You can find more guidance on joining data in the [dplyr documentation](https://www.tidyverse.org/blog/2023/01/dplyr-1-1-0-joins/).
+
+![Join Types](images/join_diagram.png)
+[source](https://intro2r.library.duke.edu/join.html)
+
+```{r load cd}
+
+cd <- cd %>%
+  rename(cd = cd_number) %>%
+  mutate(cd = as.character(cd)) %>%
+  select(cd, nabes)
+
+table <- table %>%
+  left_join(cd, by = "cd")
+
+
+```
+
+<br>
+
+# Ggplot
+
+This is a very brief demo of ggplot. [“Be awesome in ggplot2”](https://www.sthda.com/english/wiki/be-awesome-in-ggplot2-a-practical-guide-to-be-highly-effective-r-software-and-data-visualization) provides a good beginner overview of chart types in R with sample code.
+
+- Once you signal to R that you're in ggplot, use `+` instead of pipes to say "and then do this."
+
+```{r box_plot}
+
+table %>%
+  ggplot(aes(x=borough, y=years)) +
+  geom_boxplot()
+
+```
+
+```{r histo}
+
+table %>%
+  ggplot(aes(years)) +
+  geom_histogram() +
+  facet_wrap(~borough, ncol=2, scales="free_y")
+
+```
+
+- More on scale formatting can be found in the [ggplot documentation](https://ggplot2.tidyverse.org/reference/scale_continuous.html)
+
+```{r bar}
+  
+table %>%
+  mutate(year_plus = ifelse(years>1, "yes", "no")) %>%
+  ggplot() +
+  geom_bar(aes(x=borough, fill=year_plus))
+
+table %>%
+  mutate(`2year_plus` = ifelse(years>2, "yes", "no")) %>%
+  ggplot() +
+  geom_bar(aes(x=borough, fill=`2year_plus`), position = "fill") +
+  scale_y_continuous(labels = scales::percent)
+
+```
+
